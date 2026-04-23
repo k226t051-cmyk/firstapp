@@ -1,1 +1,264 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Swords, Heart, RefreshCw, Trophy, Skull } from 'lucide-react';
 
+const customStyles = `
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 10%, 30%, 50%, 70%, 90% { transform: translateX(-8px); } 20%, 40%, 60%, 80% { transform: translateX(8px); } }
+  .animate-shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
+  @keyframes flash-red { 0%, 100% { background-color: transparent; } 50% { background-color: rgba(239, 68, 68, 0.4); } }
+  .animate-flash-red { animation: flash-red 0.2s ease-in-out; }
+  @keyframes pop-in { 0% { transform: scale(0.1); opacity: 0; } 70% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+  .animate-pop-in { animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+  @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+  .animate-float { animation: float 3s ease-in-out infinite; }
+`;
+
+const OPPONENTS = [
+  {
+    id: 'level1', level: 1, name: 'なまいきな弟', icon: '👦', maxHp: 3, timeLimit: 15000, bgColor: 'bg-green-100',
+    words: [
+      { trigger: 'おれのほうがつよいぞ！', replyText: 'いや私の方が強い', romaji: 'iyawatasinohougatuyoi' },
+      { trigger: 'ばーかばーか！', replyText: 'お前がバカだ', romaji: 'omaegabakada' },
+      { trigger: 'ぜったいぼくがかつ！', replyText: '絶対負けない', romaji: 'zettaimakenai' },
+      { trigger: 'おやつかってこいよ！', replyText: '自分で買ってこい', romaji: 'zibundekattekoi' }
+    ]
+  },
+  {
+    id: 'level2', level: 2, name: 'オコリンボな母', icon: '👩', maxHp: 5, timeLimit: 12000, bgColor: 'bg-yellow-100',
+    words: [
+      { trigger: 'いつまでゲームしてるの！', replyText: 'あと五分だけ待って', romaji: 'atogofundakematte' },
+      { trigger: 'はやくおきなさい！', replyText: 'もう起きてるよ', romaji: 'mouokiteruyo' },
+      { trigger: '脱ぎっぱなしにしない！', replyText: '後で片付けるから', romaji: 'atodekatadukerukara' }, // 「づ」をduに固定
+      { trigger: 'べんきょうはすんだの！', replyText: '今からやろうと思ってた', romaji: 'imakarayaroutoomotteta' }
+    ]
+  },
+  {
+    id: 'level3', level: 3, name: '理詰めな恋人', icon: '👱‍♀️', maxHp: 7, timeLimit: 10000, bgColor: 'bg-pink-100',
+    words: [
+      { trigger: 'なんで連絡くれないの？', replyText: '仕事が忙しかったんだ', romaji: 'sigotogaisogasikattanda' },
+      { trigger: '昨日は誰といたの？', replyText: '友達と飲んでいた', romaji: 'tomodatitonondeita' }, // nondeita修正済み
+      { trigger: '最近冷たくない？', replyText: '考えすぎだよ', romaji: 'kangaesugidayo' },
+      { trigger: '全然話を聞いてないよね。', replyText: 'ちゃんと聞いてるよ', romaji: 'tyantokiiteruyo' }
+    ]
+  },
+  {
+    id: 'level4', level: 4, name: '鬼の教授', icon: '👨‍🏫', maxHp: 10, timeLimit: 8000, bgColor: 'bg-purple-100',
+    words: [
+      { trigger: 'その論拠は脆弱だね。', replyText: '追加のデータで補強します', romaji: 'tuikanode-tadehokyousimasu' },
+      { trigger: '君のレポートはひどいね。', replyText: 'ご指摘の箇所を修正します', romaji: 'gositekinokasyowosyuseisimasu' },
+      { trigger: '学術的価値が皆無だ。', replyText: '新しい視点を提供しています', romaji: 'atarasiisitenwoteikyousiteimasu' },
+      { trigger: '結論が飛躍している。', replyText: '論理のプロセスを精査します', romaji: 'ronrinopurosesuwoseisasimasu' }
+    ]
+  }
+];
+
+export default function App() {
+  const [gameState, setGameState] = useState('title');
+  const [opponent, setOpponent] = useState(null);
+  const [playerHp, setPlayerHp] = useState(5);
+  const [opponentHp, setOpponentHp] = useState(5);
+  const [currentWord, setCurrentWord] = useState(null);
+  const [typedIndex, setTypedIndex] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [effect, setEffect] = useState(null);
+  const [isScreenShaking, setIsScreenShaking] = useState(false);
+  const [isMissTyping, setIsMissTyping] = useState(false);
+  
+  const lastWordIndexRef = useRef(-1);
+  const timerRef = useRef(null);
+
+  const endGame = useCallback((result) => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setGameState(`result-${result}`);
+  }, []);
+
+  const nextWord = useCallback((currentOpp = opponent) => {
+    if (!currentOpp) return;
+    
+    let randomIndex;
+    do {
+      randomIndex = Math.floor(Math.random() * currentOpp.words.length);
+    } while (randomIndex === lastWordIndexRef.current && currentOpp.words.length > 1);
+    
+    lastWordIndexRef.current = randomIndex;
+    const word = currentOpp.words[randomIndex];
+    
+    setCurrentWord(word);
+    setTypedIndex(0);
+    setTimeLeft(currentOpp.timeLimit);
+    setEffect(null);
+    setIsMissTyping(false);
+
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 100) {
+          clearInterval(timerRef.current);
+          setPlayerHp((hp) => {
+            const newHp = hp - 1;
+            if (newHp <= 0) endGame('lose');
+            else {
+              setEffect('timeoutDamage');
+              setIsScreenShaking(true);
+              setTimeout(() => { setIsScreenShaking(false); nextWord(currentOpp); }, 1000);
+            }
+            return newHp;
+          });
+          return 0;
+        }
+        return prev - 100;
+      });
+    }, 100);
+  }, [opponent, endGame]);
+
+  const handleWordComplete = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setEffect('ronpa');
+    setOpponentHp((prev) => {
+      const newHp = prev - 1;
+      if (newHp <= 0) setTimeout(() => endGame('win'), 1000);
+      else setTimeout(() => nextWord(), 1000);
+      return newHp;
+    });
+  }, [nextWord, endGame]);
+
+  // 入力チェック：定義されたローマ字文字列(target)とキーが完全に一致する場合のみ受理
+  const checkInput = useCallback((key) => {
+    if (!currentWord) return;
+    const keyLower = key.toLowerCase();
+    const target = currentWord.romaji;
+    
+    // 現在期待されている文字 (例: 'd')
+    const expectedChar = target[typedIndex];
+
+    // 特殊判定：「ふ」だけはhu/fu両方許容するが、それ以外(特に'づ')は定義どおり
+    const isFuPart = target.substring(typedIndex, typedIndex + 2) === "fu" || target.substring(typedIndex, typedIndex + 2) === "hu";
+    if (isFuPart && (keyLower === 'f' || keyLower === 'h')) {
+      setTypedIndex(prev => prev + 1);
+      return;
+    }
+
+    // 厳格な判定
+    if (keyLower === expectedChar) {
+      const nextIndex = typedIndex + 1;
+      setTypedIndex(nextIndex);
+      if (nextIndex === target.length) handleWordComplete();
+    } else {
+      // 不一致ならミス
+      setIsMissTyping(true);
+      setPlayerHp(prev => {
+        const newHp = prev - 0.2;
+        if (newHp <= 0) endGame('lose');
+        return newHp;
+      });
+      setTimeout(() => setIsMissTyping(false), 150);
+    }
+  }, [typedIndex, currentWord, handleWordComplete, endGame]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (gameState !== 'playing' || effect !== null || !currentWord) return;
+      if (e.key.length !== 1) return;
+      checkInput(e.key);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState, effect, currentWord, checkInput]);
+
+  const startGame = (opp) => {
+    setOpponent(opp);
+    setPlayerHp(5);
+    setOpponentHp(opp.maxHp);
+    setGameState('playing');
+    lastWordIndexRef.current = -1;
+    nextWord(opp);
+  };
+
+  if (gameState === 'title') {
+    return (
+      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4">
+        <style dangerouslySetInnerHTML={{ __html: customStyles }} />
+        <h1 className="text-5xl md:text-6xl font-black mb-12 text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-orange-400 animate-float text-center">口論ゲーム</h1>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-6xl">
+          {OPPONENTS.map((opp) => (
+            <button key={opp.id} onClick={() => startGame(opp)} className={`p-6 rounded-2xl ${opp.bgColor} text-slate-900 shadow-xl transition-all hover:scale-105 text-center flex flex-col items-center justify-center`}>
+              <div className="text-6xl mb-3">{opp.icon}</div>
+              <span className="text-[10px] font-bold bg-slate-800 text-white px-2 py-0.5 rounded mb-1 text-center">LEVEL {opp.level}</span>
+              <h3 className="text-xl font-black">{opp.name}</h3>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'playing' && opponent && currentWord) {
+    const timeProgress = (timeLeft / opponent.timeLimit) * 100;
+    return (
+      <div className={`min-h-screen bg-slate-800 text-white flex flex-col relative overflow-hidden ${isScreenShaking ? 'animate-shake' : ''}`}>
+        <style dangerouslySetInnerHTML={{ __html: customStyles }} />
+        {isMissTyping && <div className="absolute inset-0 bg-red-600/20 z-10 animate-flash-red" />}
+        
+        <div className="p-4 bg-slate-900 flex justify-between items-center z-20 shadow-lg">
+          <div className="flex flex-col gap-1 w-1/3">
+            <span className="text-xs font-bold opacity-50 uppercase">PLAYER HP</span>
+            <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${(playerHp / 5) * 100}%` }} />
+            </div>
+          </div>
+          <div className="text-xl font-black italic text-yellow-500 mx-4">BATTLE</div>
+          <div className="flex flex-col gap-1 items-end w-1/3">
+            <span className="text-xs font-bold opacity-50 uppercase">{opponent.name} HP</span>
+            <div className="h-2 w-full bg-slate-700 rounded-full overflow-hidden flex justify-end">
+              <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${(opponentHp / opponent.maxHp) * 100}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-grow flex flex-col items-center justify-center p-4 z-20">
+          {effect === 'ronpa' && <div className="absolute z-50 animate-pop-in text-7xl md:text-9xl font-black text-yellow-400 italic drop-shadow-lg">論破!!</div>}
+          <div className="text-8xl md:text-[120px] mb-6 animate-float">{opponent.icon}</div>
+          
+          <div className="bg-white text-slate-900 p-6 md:p-8 rounded-3xl max-w-2xl w-full text-center shadow-2xl relative mb-8">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-6 h-6 bg-white rotate-45" />
+            <p className="text-2xl md:text-3xl font-black leading-tight text-center">「{currentWord.trigger}」</p>
+          </div>
+
+          <div className="w-full max-w-4xl space-y-4 text-center">
+            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+              <div className={`h-full transition-all duration-100 ${timeProgress < 30 ? 'bg-red-500' : 'bg-green-400'}`} style={{ width: `${timeProgress}%` }} />
+            </div>
+            
+            <div className={`bg-slate-900 p-6 md:p-10 rounded-3xl border-4 transition-all ${isMissTyping ? 'border-red-500' : 'border-slate-700'}`}>
+              <div className="text-blue-400 text-lg md:text-xl font-bold mb-4">反論：『{currentWord.replyText}』</div>
+              <div className="font-mono text-3xl md:text-4xl lg:text-5xl font-black tracking-wider flex flex-wrap justify-center gap-y-2 break-all leading-relaxed px-2">
+                {currentWord.romaji.split('').map((char, i) => (
+                  <span key={i} className={i < typedIndex ? 'text-green-400' : i === typedIndex ? 'text-white border-b-4 border-blue-500 animate-pulse' : 'text-slate-600'}>
+                    {char}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState.startsWith('result')) {
+    const isWin = gameState === 'result-win';
+    return (
+      <div className={`min-h-screen flex items-center justify-center p-4 ${isWin ? 'bg-yellow-500' : 'bg-slate-950'}`}>
+        <div className="bg-slate-900 p-10 rounded-[40px] text-center text-white max-w-md w-full animate-pop-in shadow-2xl border-4 border-white/5">
+          {isWin ? <Trophy className="w-20 h-20 mx-auto mb-6 text-yellow-400" /> : <Skull className="w-20 h-20 mx-auto mb-6 text-red-500" />}
+          <h2 className="text-4xl font-black mb-8 italic">{isWin ? 'VICTORY' : 'DEFEATED'}</h2>
+          <div className="flex flex-col gap-4">
+            <button onClick={() => setGameState('title')} className="bg-blue-600 hover:bg-blue-500 py-4 rounded-2xl font-black text-lg transition-transform active:scale-95 flex items-center justify-center gap-2 shadow-lg">
+              <RefreshCw size={20} /> タイトルへ戻る
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
